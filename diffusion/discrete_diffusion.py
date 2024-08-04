@@ -401,7 +401,7 @@ class UnifiedDiscreteDiffusion:
         
         if simplified_vlb:
             # Approximated VLB with l2 loss for t>= 2
-            delta_p_theta = self.delta_p_theta(logits_to_prob(flogits_t), x_t, x_0, t, s=t-1, m=m)        
+            delta_p_theta = self.ps_t0_delta(logits_to_prob(flogits_t), x_t, x_0, t, s=t-1, m=m)        
             vlb_loss = (delta_p_theta**2).sum(-1)   
         else:
             # Exact vlb loss for t >= 2

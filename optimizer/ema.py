@@ -23,6 +23,7 @@ class ExponentialMovingAverage:
             one_minus_decay = 1.0 - self.decay
             with torch.no_grad():
                 parameters = [p for p in parameters if p.requires_grad]
+                print(parameters[0].device,self.shadow_params[0])
                 for s_param, param in zip(self.shadow_params, parameters):
                     s_param.sub_(one_minus_decay * (s_param - param))
                 
@@ -45,9 +46,9 @@ class ExponentialMovingAverage:
         return dict(decay=self.decay, shadow_params=self.shadow_params)
 
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict,device):
         self.decay = state_dict['decay']
-        self.shadow_params = state_dict['shadow_params']
+        self.shadow_params = [param.to(device) for [param] in state_dict['shadow_params']]
         
         
         
@@ -57,6 +58,7 @@ class EMACallback(L.pytorch.callbacks.Callback):
         self.decay = decay
         self.wait_steps = wait_steps
         self.ema_model = ExponentialMovingAverage(self.decay)
+        self.device = parameters.device()
         
     def load_ema_checkpoints_to_params(self,parameters):
         self.ema_model.copy_to(parameters)
@@ -68,7 +70,7 @@ class EMACallback(L.pytorch.callbacks.Callback):
             
     def load_state_dict(self,state_dict):
         logger.info('Loading EMA into the model')
-        self.ema_model.load_state_dict(state_dict)
+        self.ema_model.load_state_dict(state_dict,device)
         
     def state_dict(self):
         return self.ema_model.state_dict()

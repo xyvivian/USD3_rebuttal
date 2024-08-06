@@ -1,0 +1,9 @@
+# requirements.txt
+
+numpy
+matplotlib
+pandas
+torch
+jaxtyping
+ml_collections
+pytorch-lightning

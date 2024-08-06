@@ -3,7 +3,7 @@ import torch
 import lightning as L
 import ml_collections
 import os
-from model.transformer import DDitTransformer
+from model.transformer import DDitTransformer,TransformerEncoder
 from diffusion.discrete_diffusion import *
 from optimizer.lr_scheduler import get_cosine_with_hard_restarts_schedule_with_warmup
 from metrics.bpc import bpc
@@ -15,7 +15,10 @@ class DiscreteDiffusionTrainer(L.LightningModule):
         self.config = config
         self.condition_dim = config.diffusion.condition_dim
         self.m = None
-        self.module = DDitTransformer(self.config)
+        if self.config.model.name == 'TransformerEncoder':
+            self.module = TransformerEncoder(self.config)
+        else:
+            self.module = DDitTransformer(self.config)
         self.num_classes = config.diffusion.num_classes
         if self.config.diffusion.noise_type== 'absorb':
             self.num_classes = self.num_classes+ 1
@@ -25,6 +28,7 @@ class DiscreteDiffusionTrainer(L.LightningModule):
                                                   num_classes = self.num_classes,
                                                   noise_schedule_type=config.diffusion.noise_schedule_type,
                                                   noise_schedule_args=config.diffusion.noise_schedule_args,
+                                                  simplified_max_val=config.diffusion.simplified_max_val
                                                   )
         self.optimizer = torch.optim.AdamW(self.module.parameters(),
                                            lr = self.config.training.lr,
@@ -62,8 +66,10 @@ class DiscreteDiffusionTrainer(L.LightningModule):
 
         # forward sampling
         x_t = self.diffusion.qt_0_sample(x_0, t, m, conditional_mask=conditional_mask)  
-
-        net_out = self.module(x_t, t/torch.tensor([self.diffusion.num_steps],dtype=torch.float,device=t.device)) #DDiT transformer expects noise, but we put in time here
+        time_steps = t
+        if self.diffusion.num_steps != 0:
+            time_steps =  t/torch.tensor([self.diffusion.num_steps],dtype=torch.float,device=t.device)
+        net_out = self.module(x_t, time_steps) #DDiT transformer expects noise, but we put in time here
         
         losses = self.diffusion.compute_loss(net_out,
                                              x_t,
@@ -71,7 +77,8 @@ class DiscreteDiffusionTrainer(L.LightningModule):
                                              t, 
                                              m, 
                                              coeff_ce=self.config.diffusion.nll_weight, 
-                                             conditional_mask=conditional_mask) 
+                                             conditional_mask=conditional_mask,
+                                             simplified_vlb=self.config.simplified_vlb) 
         return losses
     
     def training_step(self,batch,batch_idx=None):
@@ -131,11 +138,18 @@ class DiscreteDiffusionTrainer(L.LightningModule):
             return None  
         N,D = batch.shape[0],batch.shape[1]
         
+        conditional_mask = None
+        
+        if self.config.diffusion.condition_dim != 0:
+            conditional_mask = torch.zeros(batch.shape, dtype=torch.bool).to(batch.device)
+            conditional_mask[:,:self.config.diffusion.condition_dim] = 1
+        
         samples = self.sample(N,
                               D,
                               batch,
                               batch.device,
-                              num_intermediates=self.config.sampler.num_intermediates)
+                              num_intermediates=self.config.sampler.num_intermediates,
+                              conditional_mask=conditional_mask)
         
         nll = bpc(batch,samples,num_classes = self.num_classes)
         self.log('valid/NLL',
@@ -148,7 +162,7 @@ class DiscreteDiffusionTrainer(L.LightningModule):
                  )
         self.valid_nll_loss.append(nll)
         self.valid_sample_step+=1
-        if self.valid_sample_step == 5:
+        if self.valid_sample_step == 1:
             self.sample_step_done = True
         return nll
     
@@ -199,6 +213,7 @@ class DiscreteDiffusionTrainer(L.LightningModule):
                                     num_backward_steps=num_intermediates,
                                     m=m,
                                     conditional_mask = conditional_mask,
+                                    conditional_input= batch,
                                     mcmc_step_size = self.config.sampler.mcmc_step_size,
                                     mcmc_num_steps = self.config.sampler.mcmc_num_steps,
                                     mcmc_start_ratio = self.config.sampler.mcmc_start_ratio) 

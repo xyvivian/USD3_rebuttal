@@ -11,10 +11,10 @@ def get_config():
     config.simplified_vlb = False
 
     #--------------Important HPs for training ------------------
-    diffusion.num_steps = 1000 # 0 for continuous, 1000 for discrete
+    diffusion.num_steps = 0 # 0 for continuous, 1000 for discrete
     diffusion.noise_type = 'uniform'
-    diffusion.noise_schedule_type = 'cosine' #'loglinear'
-    diffusion.noise_schedule_args = {'alpha': 0.08}
+    diffusion.noise_schedule_type = 'loglinear' #'cosine' #'loglinear'
+    diffusion.noise_schedule_args = {'eps': 1e-4} #{'alpha': 0.08}
     diffusion.condition_dim = 0 #unconditional text generation
     diffusion.num_classes = 512  #26+1 for text generation
     diffusion.min_time = 1e-2

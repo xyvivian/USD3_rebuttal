@@ -4,7 +4,8 @@ import torch
 import lightning as L
 from torch.utils.data import Dataset,DataLoader
 
-class CustomDataset(Dataset):
+
+class CustomDataset(torchDataset):
     def __init__(self,
                  dataset_name = "text8",
                  split = "train"):
@@ -12,11 +13,11 @@ class CustomDataset(Dataset):
         self.dataset_name = dataset_name
         self.split = split
         if self.dataset_name == "text8":
-            self.X = torch.from_numpy(np.loadtxt(f"data/text8/{split}.txt", dtype=np.int32))
+            self.X = torch.from_numpy(np.loadtxt(f"../USD3_rebuttal/data/text8/{split}.txt", dtype=np.int32))
         elif self.dataset_name == "cifar10":
-            self.X = torch.from_numpy(np.load('data/cifar10/train.npy',dtype=int))
+            self.X = torch.from_numpy(np.load(f'../USD3_rebuttal/data/cifar10/{split}.npy')).long()
         elif self.dataset_name == "piano":
-            self.X = torch.from_numpy(np.load('data/piano/{split}.npy',dtype=int))
+            self.X = torch.from_numpy(np.load(f'../USD3_rebuttal/data/piano/{split}.npy')).long()
             
     def __len__(self):
         return self.X.shape[0]

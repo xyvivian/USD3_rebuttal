@@ -36,7 +36,7 @@ def get_config():
     training.beta2 = 0.98
     training.weight_decay = 1e-1
     training.num_warmup_steps = 5000
-    training.num_training_steps = 800_000
+    training.num_training_steps = 400_000
     training.ema_wait_steps = 5000
     training.ema_decay=0.999
     training.enable_16_precision=False
@@ -54,12 +54,12 @@ def get_config():
  
     #---------------- Data -----------------------------
     data.name = 'cifar10'
-    data.train_num_workers =0
-    data.train_batch_size = 512
+    data.train_num_workers =16
+    data.train_batch_size = 768
     data.test_num_workers = 0
-    data.test_batch_size = 512
+    data.test_batch_size = 768
     data.val_num_workers = 0
-    data.val_batch_size = 512
+    data.val_batch_size = 768
 
     #-------------------Other training variables---------------
     

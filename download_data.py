@@ -16,7 +16,7 @@ drive_url = 'https://drive.google.com/uc?id=1gKYZAxkv07aP_5oiWyxVqQGM1-7huMXx'
 
 # Local paths
 output_path = 'data.zip'
-extract_to = 'data'
+extract_to = './'
 
 # Download the file
 download_from_drive(drive_url, output_path)

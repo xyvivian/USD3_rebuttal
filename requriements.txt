@@ -7,3 +7,4 @@ torch
 jaxtyping
 ml_collections
 pytorch-lightning
+omegaconf

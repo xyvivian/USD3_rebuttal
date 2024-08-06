@@ -14,9 +14,9 @@ class CustomDataset(Dataset):
         if self.dataset_name == "text8":
             self.X = torch.from_numpy(np.loadtxt(f"data/text8/{split}.txt", dtype=np.int32))
         elif self.dataset_name == "cifar10":
-            self.X = torch.from_numpy(np.load('data/cifar10/train.npy',dtype=int))
+            self.X = torch.from_numpy(np.load('data/cifar10/train.npy'))
         elif self.dataset_name == "piano":
-            self.X = torch.from_numpy(np.load('data/piano/{split}.npy',dtype=int))
+            self.X = torch.from_numpy(np.load('data/piano/{split}.npy'))
             
     def __len__(self):
         return self.X.shape[0]

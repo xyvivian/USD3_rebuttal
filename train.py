@@ -1,9 +1,7 @@
 import torch
-import numpy as np
 import argparse
 import torch
 torch.set_num_threads(24)
-import ml_collections
 import os
 from pathlib import Path
 import logging
@@ -26,21 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 def main(cfg,checkpoint_path):
-    gpu = [4] #[0,2] #list(range(1,1+cfg.training.num_gpus))
-    #precision = 32
-    #if cfg.training.enable_16_precision:
     precision = 'bf16'
-        
-    #logger.info(os.environ['RANK'])
-    #logger.info(os.environ["WORLD_SIZE"])
     device_count = torch.cuda.device_count()
     cur_device = torch.cuda.current_device()
     logger.info(f"Device Count:{device_count}, Current Device: {cur_device}")
     
     train_model = DiscreteDiffusionTrainer(cfg)
-    wandb_logger = WandbLogger(project=cfg.exp_name)
-    cur_time = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S%z")
-    output_dir = f"{cur_time}_{cfg.exp_name}"
+    wandb_logger = WandbLogger(project='USD3', name=cfg.exp_name, log_model=False, config=cfg)
+    cur_time = datetime.datetime.now().strftime("%m_%d_%H_%M")
+    output_dir = f"{cfg.exp_name}_{cur_time}"
     
     train_dataset = CustomDataset(dataset_name = cfg.dataset_name,split='train')
     valid_dataset = CustomDataset(dataset_name = cfg.dataset_name,split='valid')
@@ -50,19 +42,19 @@ def main(cfg,checkpoint_path):
                              )
     
     callbacks = [L.pytorch.callbacks.LearningRateMonitor(logging_interval='step'),
-                 L.pytorch.callbacks.ModelCheckpoint(dirpath = output_dir + "/checkpoints",
+                 L.pytorch.callbacks.ModelCheckpoint(dirpath = os.path.join('checkpoints', output_dir),
                                                      save_weights_only=False,
                                                      monitor='valid/NLL_epoch',
                                                      mode = 'min',
                                                      save_top_k=5,
                                                      filename = '{epoch:02d}-{valid/NLL:.3f}'
                                                      ),
-                 L.pytorch.callbacks.ModelCheckpoint(dirpath= output_dir + "/checkpoints",
+                 L.pytorch.callbacks.ModelCheckpoint(dirpath= os.path.join('checkpoints', output_dir),
                                                      monitor='step',
                                                      save_top_k=5,
                                                      mode='max',
                                                      every_n_train_steps = 1000),
-                 L.pytorch.callbacks.ModelCheckpoint(dirpath=output_dir + "/checkpoints",
+                 L.pytorch.callbacks.ModelCheckpoint(dirpath=os.path.join('checkpoints', output_dir),
                                                      monitor='valid/loss_epoch',
                                                      filename = '{epoch:02d}-{valid/loss_epoch:.3f}',
                                                      save_top_k = 5),
@@ -72,16 +64,16 @@ def main(cfg,checkpoint_path):
     
     trainer = L.Trainer(strategy='ddp',
                         max_steps = cfg.training.num_training_steps,
-                        devices = gpu,
+                        devices = args.gpus,
                         callbacks = callbacks,
-                        log_every_n_steps = 10,
                         logger=wandb_logger,
                         enable_progress_bar=True,
                         gradient_clip_val=1.0,
                         accumulate_grad_batches=1,
                         gradient_clip_algorithm='norm',
                         precision=precision,
-                        num_sanity_val_steps=1,
+                        check_val_every_n_epoch=20,
+                        # val_check_interval=10, 
                         # limit_train_batches=5,
                         # limit_val_batches=5,
                         )
@@ -99,6 +91,8 @@ if __name__ == '__main__':
     parser.add_argument('--simplified_vlb',action='store_true',default=False)
     parser.add_argument('--data',type=str,default='text8')
     parser.add_argument('--simplified_max_val',type=float,default=1.0)
+    parser.add_argument('--gpus',type=int,default=[0], nargs='*', help='GPUs to use')
+
     args = parser.parse_args()
     if args.data =='text8':
         from config.text8_train import get_config
@@ -106,7 +100,7 @@ if __name__ == '__main__':
         from config.piano_train import get_config
     elif args.data == 'cifar10':
         from config.cifar10_train import get_config
-    cfg =get_config()
+    cfg = get_config()
     cfg.simplified_vlb = args.simplified_vlb
     cfg.simplified_max_val = args.simplified_max_val
     cfg.exp_name = f'{cfg.model.name}_{cfg.data.name}_lr_{cfg.training.lr}_wd_{cfg.training.weight_decay}_nll_{cfg.diffusion.nll_weight}_l2_{cfg.simplified_vlb}_{cfg.simplified_max_val}'

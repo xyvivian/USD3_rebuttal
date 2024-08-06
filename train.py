@@ -1,6 +1,8 @@
+import torch
 import numpy as np
 import argparse
 import torch
+torch.set_num_threads(24)
 import ml_collections
 import os
 from pathlib import Path
@@ -10,7 +12,7 @@ import sys
 from trainer.trainer import DiscreteDiffusionTrainer
 from dataloader.dataloader import DataModule,CustomDataset
 from pytorch_lightning.loggers import WandbLogger
-from config.text8_train import get_config
+
 from optimizer.ema import EMACallback
 import sys
 import datetime
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def main(cfg,checkpoint_path):
-    gpu = list(range(cfg.training.num_gpus))
+    gpu = [4] #[0,2] #list(range(1,1+cfg.training.num_gpus))
     #precision = 32
     #if cfg.training.enable_16_precision:
     precision = 'bf16'
@@ -58,6 +60,7 @@ def main(cfg,checkpoint_path):
                  L.pytorch.callbacks.ModelCheckpoint(dirpath= output_dir + "/checkpoints",
                                                      monitor='step',
                                                      save_top_k=5,
+                                                     mode='max',
                                                      every_n_train_steps = 1000),
                  L.pytorch.callbacks.ModelCheckpoint(dirpath=output_dir + "/checkpoints",
                                                      monitor='valid/loss_epoch',
@@ -93,8 +96,19 @@ def main(cfg,checkpoint_path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Discrete Diffusion')
     parser.add_argument('--checkpoint_path', type=str,default=None)
-    
+    parser.add_argument('--simplified_vlb',action='store_true',default=False)
+    parser.add_argument('--data',type=str,default='text8')
+    parser.add_argument('--simplified_max_val',type=float,default=1.0)
     args = parser.parse_args()
-    cfg = get_config()
+    if args.data =='text8':
+        from config.text8_train import get_config
+    elif args.data == 'piano':
+        from config.piano_train import get_config
+    elif args.data == 'cifar10':
+        from config.cifar10_train import get_config
+    cfg =get_config()
+    cfg.simplified_vlb = args.simplified_vlb
+    cfg.simplified_max_val = args.simplified_max_val
+    cfg.exp_name = f'{cfg.model.name}_{cfg.data.name}_lr_{cfg.training.lr}_wd_{cfg.training.weight_decay}_nll_{cfg.diffusion.nll_weight}_l2_{cfg.simplified_vlb}_{cfg.simplified_max_val}'
     main(cfg,checkpoint_path=args.checkpoint_path)
     

@@ -130,11 +130,13 @@ class UnifiedDiscreteDiffusion:
                  num_steps, 
                  num_classes, 
                  noise_schedule_type, 
-                 noise_schedule_args):
+                 noise_schedule_args,
+                 simplified_max_val=1):
         self.num_steps = num_steps                      # 0 indicates using continuous-time diffusion 
         self.num_classes = num_classes
         self.noise_schedule_type = noise_schedule_type
         self.noise_schedule_args = noise_schedule_args  # args passed to noise_schedule
+        self.simplified_max_val = simplified_max_val
         
     @torch.no_grad()
     def get_alphabar_beta(self, t, s=None): 
@@ -343,7 +345,7 @@ class UnifiedDiscreteDiffusion:
         logprob = torch.logaddexp(logterm1, probterm2.clip(min=EPS).log())
         return logprob
     
-    def ps_t0_delta(self, fprob_t, x_t, x_0, t, s, m=None):
+    def ps_t0_delta(self, fprob_t, x_t, x_0, t, s, m=None,max_val=1):
         """ ps_t  - qs_t_0, requires s > 0, t > s
         fprob_t   : (B, N1, ..., Nk, C)
         x_t       : (B, N1, ..., Nk)
@@ -366,7 +368,7 @@ class UnifiedDiscreteDiffusion:
         phi_t_s = (1-alphabar_s) * alphabar_t / alphabar_s 
         phi_t_s = phi_t_s / (alphabar_t + (1-alphabar_t)*xt_dot_m)
         # clip the value to avoid numerical issue
-        phi_t_s = torch.clip(phi_t_s, max=1)
+        phi_t_s = torch.clip(phi_t_s, max=max_val)
 
         delta_without_coef = f_minus_x0 + (phi_t_s*index_last_dim(f_minus_x0, x_t))[...,None] * xt_minus_m
         return delta_without_coef
@@ -384,7 +386,7 @@ class UnifiedDiscreteDiffusion:
         pT_prob = torch.broadcast_to(m, qT_0_prob.shape) if m is not None else torch.full_like(qT_0_prob, 1/self.num_classes)
         return F.kl_div(pT_prob.clip(min=EPS).log(), qT_0_prob, reduction='none').sum(-1) # (B, N1, ..., Nk)
     
-    def discrete_time_loss(self, flogits_t, x_t, x_0, t, m=None, conditional_mask=None, simplified_vlb=False):
+    def discrete_time_loss(self, flogits_t, x_t, x_0, t, m=None, conditional_mask=None, simplified_vlb=False,max_val=1):
         """
         conditional_mask : (B, N1, ..., Nk) or None, the mask is used for conditioning or padding. 
         flogits_t: (B, N1, ..., Nk, C)
@@ -401,7 +403,7 @@ class UnifiedDiscreteDiffusion:
         
         if simplified_vlb:
             # Approximated VLB with l2 loss for t>= 2
-            delta_p_theta = self.ps_t0_delta(logits_to_prob(flogits_t), x_t, x_0, t, s=t-1, m=m)        
+            delta_p_theta = self.ps_t0_delta(logits_to_prob(flogits_t), x_t, x_0, t, s=t-1, m=m,max_val=max_val)        
             vlb_loss = (delta_p_theta**2).sum(-1)   
         else:
             # Exact vlb loss for t >= 2
@@ -589,7 +591,7 @@ class UnifiedDiscreteDiffusion:
             vlb_loss, ce_loss = self.continuous_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, denoising_fn, uniform_sampling=True, simplified_vlb=simplified_vlb)
         else:
             # discrete-time diffusion
-            vlb_loss, ce_loss = self.discrete_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, simplified_vlb=simplified_vlb)
+            vlb_loss, ce_loss = self.discrete_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, simplified_vlb=simplified_vlb,max_val=self.simplified_max_val)
 
         loss = coeff_vlb * vlb_loss + coeff_ce * ce_loss
 
@@ -669,7 +671,11 @@ class UnifiedDiscreteDiffusion:
         mcmc_start_ratio : [0,1.0], a ratio of when to start mcmc. 1.0 means start from beginning. 0.0 means start from the end (no mcmc).
         """
         # compute fprob_t
-        fprob_t = logits_to_prob(denoising_fn(x_t, t/torch.tensor([self.num_steps],dtype=torch.float,device=t.device)))           # (B, N1, ..., Nk, C)
+        time_steps = t
+        if self.num_steps != 0:
+            time_steps =  t/torch.tensor([self.num_steps],dtype=torch.float,device=t.device)
+        fprob_t = logits_to_prob(denoising_fn(x_t, time_steps))           # (B, N1, ..., Nk, C)
+        
         # compute P(x_s | x_t)
         prob_s = self.ps_t_prob(fprob_t, x_t, t=t, s=s, m=m).type(torch.float)   # (B, N1, ..., Nk, C)
         # for s = 0, change prob_s to fprob_t (final step sampling towards x0)

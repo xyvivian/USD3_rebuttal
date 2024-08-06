@@ -7,16 +7,16 @@ def get_config():
     config.model = model = ml_collections.ConfigDict()
     config.data = data = ml_collections.ConfigDict()
     config.sampler = sampler = ml_collections.ConfigDict()
-    config.dataset_name="text8"
+    config.dataset_name="piano"
     config.simplified_vlb = False
 
     #--------------Important HPs for training ------------------
     diffusion.num_steps = 1000 # 0 for continuous, 1000 for discrete
-    diffusion.noise_type = 'absorb'
-    diffusion.noise_schedule_type = 'loglinear'
-    diffusion.noise_schedule_args = {'eps': 1e-3}
-    diffusion.condition_dim = 0 #unconditional text generation
-    diffusion.num_classes = 27 #26+1 for text generation
+    diffusion.noise_type = 'uniform'
+    diffusion.noise_schedule_type = 'cosine' #'loglinear'
+    diffusion.noise_schedule_args = {'alpha': 0.08}
+    diffusion.condition_dim = 32 #unconditional text generation
+    diffusion.num_classes = 129  #26+1 for text generation
     diffusion.min_time = 1e-2
     diffusion.nll_weight = 0.001 #weight on CE
     diffusion.simplified_max_val=1
@@ -30,8 +30,8 @@ def get_config():
 
     #---------- Distributed or not --------------------------------
     training.distributed = True
-    training.num_gpus = 2
-    training.lr = 3e-4
+    training.num_gpus = 1
+    training.lr = 2e-4
     training.beta1 = 0.9
     training.beta2 = 0.98
     training.weight_decay = 1e-1
@@ -43,17 +43,17 @@ def get_config():
     
     #---------------- Architecture Variables -----------------
     model.hidden_size= 768
-    model.length = 256
+    model.length = 1024
     model.n_blocks=  12
     model.n_heads = 12
     model.dropout = 0.1
     model.scale_by_sigma = True
     model.ffn_unit = 'glu'
     model.prenorm = False
-    model.name = 'DDitTransformer'
+    model.name == 'TransformerEncoder'
  
     #---------------- Data -----------------------------
-    data.name = 'text8'
+    data.name = 'piano'
     data.train_num_workers =0
     data.train_batch_size = 256
     data.test_num_workers = 0
@@ -62,7 +62,7 @@ def get_config():
     data.val_batch_size = 256
 
     #-------------------Other training variables---------------
+    
 
-
-    config.exp_name = f'lr_{training.lr}_wd_{training.weight_decay}_nll_{diffusion.nll_weight}_l2_{config.simplified_vlb}' #change discrete_diffusion when using ctmc only or ctmcplus
+    config.exp_name = f'{model.name}_{data.name}_lr_{training.lr}_wd_{training.weight_decay}_nll_{diffusion.nll_weight}_l2_{config.simplified_vlb}' #change discrete_diffusion when using ctmc only or ctmcplus
     return config

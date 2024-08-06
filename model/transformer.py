@@ -96,6 +96,7 @@ class TimestepEmbedder(nn.Module):
 
 
 
+
 class LabelEmbedder(nn.Module):
     """
     Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
@@ -272,3 +273,161 @@ class DDitTransformer(nn.Module):
             esigm1_log = torch.where(sigma < 0.5, torch.expm1(sigma), sigma.exp() - 1).log().to(x.dtype)[:, None, None]
             x = x - esigm1_log - np.log(x.shape[-1] - 1)# this will be approximately averaged at 0
         return x #.type(torch.float32)
+    
+    
+    
+#================================= Regular Sequence Transformer Encoder ===============================================#
+def get_ffn_unit(in_dim,
+                 ffn_unit="linear",
+                 hidden_dim = None,
+                 out_dim = None,
+                 activation = F.silu,
+                 ffn_dropout = 0.0,
+                 bias = True):
+    if ffn_unit == "glu":
+        return GatedLinearFFN(in_dim, hidden_dim,out_dim,activation, ffn_dropout,bias)
+    elif ffn_unit == "linear":
+        return LinearFFN(in_dim, hidden_dim,out_dim,activation,ffn_dropout,bias)
+
+class GatedLinearFFN(nn.Module):
+    def __init__(self,
+                 in_dim,
+                 hidden_dim =None,
+                 out_dim = None,
+                 activation =F.silu,
+                 ffn_dropout = 0.0,
+                 bias = True):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = (4*in_dim)
+        if out_dim is None:
+            out_dim = in_dim
+        self.fc1 = nn.Linear(in_dim,hidden_dim,bias=bias)
+        self.gated_fc = nn.Linear(in_dim,hidden_dim,bias=bias)
+        self.fc2 = nn.Linear(hidden_dim,out_dim,bias=bias)
+        self.dropout=nn.Dropout(ffn_dropout)
+        self.activation = activation
+    
+    def forward(self,X):
+        out = self.gated_fc(X)*self.activation(self.fc1(X))
+        return self.dropout(self.fc2(self.dropout(out)))
+    
+    
+class LinearFFN(nn.Module):
+    def __init__(self,
+                 in_dim,
+                 hidden_dim = None,
+                 out_dim = None,
+                 activation=F.silu,
+                 ffn_dropout = 0.0,
+                 bias = True):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = (4*in_dim)
+        if out_dim is None:
+            out_dim = in_dim
+        self.fc1 = nn.Linear(in_dim,hidden_dim,bias=bias)
+        self.fc2 = nn.Linear(hidden_dim,out_dim,bias=bias)
+        self.dropout=nn.Dropout(ffn_dropout)
+        self.activation = activation   
+        
+    def forward(self,X):
+        return self.dropout(self.fc2(self.dropout(self.activation(self.fc1(X)))))     
+        
+    
+    
+class AttentionLayer(nn.Module):
+    def __init__(self,d_model,n_heads,attention_dropout = 0.1):
+        super().__init__()
+        d_keys = (d_model // n_heads)
+        d_values = (d_model // n_heads)
+        self.dropout = nn.Dropout(attention_dropout)
+        
+        self.query_proj = nn.Linear(d_model, d_keys* n_heads)
+        self.key_proj = nn.Linear(d_model, d_keys * n_heads)
+        self.value_proj = nn.Linear(d_model, d_values * n_heads)
+        self.out_proj = nn.Linear(d_values * n_heads, d_model)
+        self.n_heads = n_heads
+        
+    def forward(self, queries, keys, values):
+        B,L,_ = queries.shape
+        _,S,_ = keys.shape
+        H = self.n_heads
+        queries= self.query_proj(queries).view(B,L,H,-1)
+        E = queries.shape[-1]
+        keys = self.key_proj(keys).view(B,S,H,-1)
+        values = self.value_proj(values).view(B,S,H,-1)
+    
+        scale = 1/ math.sqrt(E)
+        scores = torch.einsum('blhe,bshe -> bhls',queries,keys)
+        A = self.dropout(torch.softmax(scale*scores),dim=-1)
+        V = torch.einsum('bhls,bshd->blhd',A,values)
+        V = V.view(B,L,-1)
+        return self.out_proj(V)
+    
+    
+class  EncoderLayer(nn.Module):
+    def __init__(self,attention,feedforward, d_model,temb_dim,dropout,prenorm=False):
+        super().__init__()
+        self.attenion = attention
+        self.feedforward = feedforward
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.prenorm = prenorm
+        self.dropout = nn.Dropout(dropout)
+        self.film_from_temb = nn.Linear(temb_dim, 2*d_model)
+    
+    def forward(self,x,temb):
+        K = x.shape[-1]
+        film_params = self.film_from_temb(temb)
+        if self.prenorm:
+            new_x = self.attention(self.norm1(x),self.norm1(x),self.norm1(x))
+            x = x+self.dropout(new_x)
+            x = film_params[:, None, :K] * x + film_params[:, None, K:]
+            y= self.norm2(x)
+            y =self.feedforward(y)
+            return (x+y)
+        else:
+            x = film_params[:, None, :K] * x + film_params[:, None, K:]
+            new_x = self.attention(x,x,x)
+            x = x + self.dropout(new_x)
+            y = x = self.norm1(x)
+            y = self.feedforward(y)
+            return self.norm2(x+y)
+        
+        
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.absorb = config.diffusion.noise_type == "absorb"
+        vocab_size = config.diffusion.num_classes + (1 if self.absorb else 0)
+        self.vocab_embed = EmbeddingLayer(config.model.hidden_size, vocab_size)
+        self.sigma_map = TimestepEmbedder(config.model.length)
+        self.blocks = nn.ModuleList([
+            EncoderLayer(attention=AttentionLayer(d_model=config.model.hidden_size,
+                                                  n_heads=config.model.n_heads,
+                                                  attention_dropout=config.model.dropout),
+                         feedforward=get_ffn_unit(in_dim=config.model.hidden_size,
+                                                  ffn_unit = config.model.ffn_unit,
+                                                  activation = F.gelu,
+                                                  ffn_dropout = config.model.dropout),
+                         temb_dim = config.model.length,
+                         d_model= config.model.hidden_size,
+                         dropout = config.model.dropout,
+                         prenorm = config.model.prenorm)
+            for _ in range(config.model.n_blocks)
+        ])  
+        self.norm_layer = nn.LayerNorm(config.model.hidden_size)
+        self.linear = nn.Linear(config.model.hidden_size,vocab_size)
+        
+    def forward(self,indices,sigma):
+        x = self.vocab_embed(indices)
+        c = F.silu(self.sigma_map(sigma))
+        for i in range(len(self.blocks)):
+            x = self.blocks[i](x, c)
+        x = self.norm_layer(x)
+        x = self.linear(x)
+        return x

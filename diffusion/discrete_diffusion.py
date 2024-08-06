@@ -472,7 +472,7 @@ class UnifiedDiscreteDiffusion:
         # when coef =2, it is useful for MCMC corrector step (before multiply beta and step size)
         return inside_gt, beta_t, m_dot_xt
     
-    def continuous_time_loss(self, flogits_t, x_t, x_0, t, m=None, conditional_mask=None, denoising_fn=None, uniform_sampling=True, simplified_vlb=False):
+    def continuous_time_loss(self, flogits_t, x_t, x_0, t, m=None, conditional_mask=None, simplified_vlb=False):
         """
         conditional_mask : (B, N1, ..., Nk) or None, the mask is used for conditioning or padding. 
         flogits_t: (B, N1, ..., Nk, C)
@@ -486,76 +486,27 @@ class UnifiedDiscreteDiffusion:
         m = m.clone() # clone it in case that there is some inplace operation on m 
         ## ----------------- get  first term --------------------
         fprob_t = logits_to_prob(flogits_t) # (B, N1, ..., Nk, C)
-        inside_gt, beta_t, m_dot_xt = self._gt_inner(fprob_t, x_t, t, m=m, coef=1.0)
+        flogprob_t = logits_to_logprob(flogits_t)
+        inside_gt, beta_t, _ = self._gt_inner(fprob_t, x_t, t, m=m, coef=1.0)
 
         beta_t = beta_t.view(shape)
-        beta_t_ori = beta_t.clone()
         if simplified_vlb:
             beta_t = torch.clip(beta_t, max=1.0)
         vlb_term1 = beta_t * inside_gt.sum(-1) # (B, N1, ..., Nk)
-        
         ## ----------------- get second term --------------------
-        B, D = x_t.size(0), x_t.size(-1)
-        x_t = x_t.reshape(B, -1)                ### reshape for easy sampling
-        ## Sample z first from S, here we support two types of S, uniform and the same with CTMC forward distribution
-        if uniform_sampling: #### sampling with uniform distribution 
-            ## For each b, sample a dimension from N1*N2*...*Nk
-            changed_dim = torch.randint(low=0, high=x_t.size(-1), size=(B,), device=x_t.device)
-            ## random sample a vector with dimension (B, 1), from C-1 classes. Different from x_t[sampled_dim] 
-            idx = torch.arange(B, device=x_t.device)
-            ori_class = x_t[idx, changed_dim]
-            new_class = torch.randint(low=0, high=self.num_classes-1, size=(B,), device=x_t.device)
-            new_class[new_class>=ori_class] += 1 # make sure new_class != ori_class
-            
-        else:   #### sampling with forward CTMC distribution 
-            m_reshape = m.reshape(B, -1, self.num_classes) # B x D x C
-            # step 1: sample a dimension, based on -r_t (x_t | x_t) = beta_t(1 - <x_t, m>)
-            m_dot_xt = index_last_dim(m_reshape, x_t) # B x D
-            move_out_rate = 1 - m_dot_xt
-            changed_dim = torch.multinomial(move_out_rate, num_samples=1).squeeze(-1) # B
-
-            # step 2: for that dimension, sample a new class based on r_t (* | x_t) = beta_t (m - x_t)
-            idx = torch.arange(B, device=x_t.device)
-            current_value = x_t[idx, changed_dim] # B 
-            next_value_prob = m_reshape[idx, changed_dim, :] # B x C
-            next_value_prob = set_last_dim(next_value_prob, current_value, value=0) # B x C
-            new_class = torch.multinomial(next_value_prob, num_samples=1).squeeze(-1) # B 
-
-        ## Create the new sampled z_t 
-        z_t = x_t.clone()
-        z_t[idx, changed_dim] = new_class
-        z_t = z_t.reshape(x_0.shape)            # B, N1, ..., Nk 
-
+        B = x_t.size(0)
         ## Forward pass of zt
-        flogits_zt = denoising_fn(z_t, t)
-        flogprob_zt = logits_to_logprob(flogits_zt)
-        log_inside_gt_zt = self._log_gt_inner(flogprob_zt, z_t, t, m=m, coef=1.0)
+        log_inside_gt_zt = self._log_gt_inner(flogprob_t, x_t, t, m=m, coef=1.0)
 
         ## compute q( |x_0) and q(z_t | x_0): (B, N1, ..., Nk, C)
         qt_0_prob = self.qt_0_prob(x_0, t, m=m, return_beta=False)
-        qt_0_prob_at_zt = index_last_dim(qt_0_prob, z_t).unsqueeze(-1)
+        qt_0_prob_at_zt = index_last_dim(qt_0_prob, x_t).unsqueeze(-1)
         qt_0_ratio = qt_0_prob / qt_0_prob_at_zt
-        set_last_dim(qt_0_ratio, z_t)
-        rt_zt_given_anyinput = (beta_t * index_last_dim(m, z_t)).unsqueeze(-1) # B, N1, ..., Nk, 1, this ignores - y
-
-        ## compute nomalizer M 
-        if uniform_sampling: 
-            M = qt_0_ratio.sum(-1) / D / (self.num_classes-1) # B, N1, ..., Nk
-        else:
-            ### compute normalizer
-            # rt(any_zd | any_zd), B x D x C values 
-            moveout_rate_allclass = beta_t_ori.unsqueeze(-1) * (m - 1) # B, N1, ..., Nk, C
-            # rt(yt^d | yt^d), B x D values
-            moveout_rate_yt = index_last_dim(moveout_rate_allclass, z_t).unsqueeze(-1) # B, N1, ..., Nk, 1
-            normalizer_yt = -moveout_rate_yt.sum(dim=list(range(1, moveout_rate_yt.dim())), keepdim=True) # B, 1, ...,1k,1
-            # Z(yt^1:D\d, any_zd),  B x D x C values
-            normalizer_any_zd = normalizer_yt + moveout_rate_yt - moveout_rate_allclass # B, N1, ..., Nk, C
-            M = (qt_0_ratio * rt_zt_given_anyinput / normalizer_any_zd).sum(-1) # B, N1, ..., Nk
-        M = M.sum(dim=list(range(1, M.dim())), keepdim=True)
+        set_last_dim(qt_0_ratio, x_t)
+        rt_zt_given_anyinput = (beta_t * index_last_dim(m, x_t)).unsqueeze(-1) # B, N1, ..., Nk, 1, this ignores - y
 
         ## compute the second term 
         vlb_term2 = -(qt_0_ratio * rt_zt_given_anyinput * log_inside_gt_zt).sum(-1)
-        vlb_term2 = vlb_term2 / M
         vlb_loss = vlb_term1 + vlb_term2
 
         # CE loss
@@ -583,15 +534,14 @@ class UnifiedDiscreteDiffusion:
                      coeff_ce=1.,
                      coeff_vlb=1., 
                      conditional_mask=None,
-                     denoising_fn=None,
                      simplified_vlb=False):
 
         if self.num_steps == 0:
             # continuous-time diffusion
-            vlb_loss, ce_loss = self.continuous_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, denoising_fn, uniform_sampling=True, simplified_vlb=simplified_vlb)
+            vlb_loss, ce_loss = self.continuous_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, simplified_vlb=simplified_vlb)
         else:
             # discrete-time diffusion
-            vlb_loss, ce_loss = self.discrete_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, simplified_vlb=simplified_vlb,max_val=self.simplified_max_val)
+            vlb_loss, ce_loss = self.discrete_time_loss(logits_t, x_t, x_0, t, m, conditional_mask, simplified_vlb=simplified_vlb, max_val=self.simplified_max_val)
 
         loss = coeff_vlb * vlb_loss + coeff_ce * ce_loss
 

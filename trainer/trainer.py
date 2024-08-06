@@ -71,8 +71,7 @@ class DiscreteDiffusionTrainer(L.LightningModule):
                                              t, 
                                              m, 
                                              coeff_ce=self.config.diffusion.nll_weight, 
-                                             conditional_mask=conditional_mask,
-                                             denoising_fn=self.module) 
+                                             conditional_mask=conditional_mask) 
         return losses
     
     def training_step(self,batch,batch_idx=None):

@@ -92,6 +92,8 @@ if __name__ == '__main__':
     parser.add_argument('--data',type=str,default='text8')
     parser.add_argument('--simplified_max_val',type=float,default=1.0)
     parser.add_argument('--gpus',type=int,default=[0], nargs='*', help='GPUs to use')
+    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--continuous',action='store_true',default=False)
 
     args = parser.parse_args()
     if args.data =='text8':
@@ -101,8 +103,17 @@ if __name__ == '__main__':
     elif args.data == 'cifar10':
         from config.cifar10_train import get_config
     cfg = get_config()
+    
+    if args.continuous:
+        cfg.diffusion.num_steps = 0
+        type='continuous'
+    else:
+        cfg.diffusion.num_steps = 1000
+        type='discrete'
+    
     cfg.simplified_vlb = args.simplified_vlb
     cfg.simplified_max_val = args.simplified_max_val
-    cfg.exp_name = f'{cfg.model.name}_{cfg.data.name}_lr_{cfg.training.lr}_wd_{cfg.training.weight_decay}_nll_{cfg.diffusion.nll_weight}_l2_{cfg.simplified_vlb}_{cfg.simplified_max_val}'
+    cfg.training.lr = args.lr
+    cfg.exp_name = f'{cfg.model.name}_{cfg.data.name}_lr{cfg.training.lr}_nll{cfg.diffusion.nll_weight}_l2{cfg.config.simplified_vlb}_{type}'
     main(cfg,checkpoint_path=args.checkpoint_path)
     

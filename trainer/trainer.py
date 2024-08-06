@@ -1,8 +1,5 @@
-import numpy as np
 import torch
 import lightning as L
-import ml_collections
-import os
 from model.transformer import DDitTransformer,TransformerEncoder
 from diffusion.discrete_diffusion import *
 from optimizer.lr_scheduler import get_cosine_with_hard_restarts_schedule_with_warmup
@@ -10,7 +7,7 @@ from metrics.bpc import bpc
 
 class DiscreteDiffusionTrainer(L.LightningModule):
  
-    def __init__(self,config):
+    def __init__(self, config):
         super().__init__()
         self.config = config
         self.condition_dim = config.diffusion.condition_dim

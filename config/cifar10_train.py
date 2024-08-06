@@ -36,15 +36,15 @@ def get_config():
     training.beta2 = 0.98
     training.weight_decay = 1e-1
     training.num_warmup_steps = 5000
-    training.num_training_steps = 400_000
+    training.num_training_steps = 100_000
     training.ema_wait_steps = 5000
     training.ema_decay=0.999
     training.enable_16_precision=False
     
     #---------------- Architecture Variables -----------------
-    model.hidden_size= 768
+    model.hidden_size = 768
     model.length = 64
-    model.n_blocks=  12
+    model.n_blocks = 12
     model.n_heads = 12
     model.dropout = 0.1
     model.scale_by_sigma = False
@@ -55,14 +55,13 @@ def get_config():
     #---------------- Data -----------------------------
     data.name = 'cifar10'
     data.train_num_workers =16
-    data.train_batch_size = 768
+    data.train_batch_size = 512
     data.test_num_workers = 0
-    data.test_batch_size = 768
+    data.test_batch_size = 512
     data.val_num_workers = 0
-    data.val_batch_size = 768
+    data.val_batch_size = 512
 
     #-------------------Other training variables---------------
     
-
-    config.exp_name = f'{model.name}_{data.name}_lr_{training.lr}_wd_{training.weight_decay}_nll_{diffusion.nll_weight}_l2_{config.simplified_vlb}' #change discrete_diffusion when using ctmc only or ctmcplus
+    config.exp_name = f'{model.name}_{data.name}_lr{training.lr}_nll{diffusion.nll_weight}_l2{config.simplified_vlb}_T{diffusion.num_steps}' #change discrete_diffusion when using ctmc only or ctmcplus
     return config
